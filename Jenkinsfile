@@ -1,90 +1,44 @@
-// Jenkinsfile — CI/CD for AWS Sample Node.js app
-// - Node tasks run inside node:16
-// - Docker build/push run on controller (uses DinD via DOCKER_HOST)
-// - Tests are optional: stage won’t fail if package.json has no "test" script
-
 pipeline {
-  agent none
-  options { skipDefaultCheckout(true) }
+    agent any
 
-  environment {
-    DOCKER_IMAGE = "YOUR_DOCKERHUB_USERNAME/aws-sample-app:latest" // <-- change me
-  }
-
-  stages {
-    stage('Checkout') {
-      agent any
-      steps {
-        echo '📥 Checking out source code...'
-        checkout scm
-        stash name: 'src', includes: '**/*'
-      }
+    environment {
+        DOCKER_IMAGE = "22063713/aws-sample-app:latest"
     }
 
-    stage('Install deps & Unit tests (Node 16)') {
-      agent {
-        docker {
-          image 'node:16'
-          // Ensure the DinD host can bind-mount the workspace path
-          args '-u root:root -v /var/jenkins_home:/var/jenkins_home'
+    stages {
+        stage('Checkout') {
+            steps {
+                git branch: 'main',
+                    url: 'https://github.com/22063713/aws-elastic-beanstalk-express-js-sample.git'
+            }
         }
-      }
-      steps {
-        echo '📦 Restoring source and installing dependencies...'
-        unstash 'src'
-        sh 'npm install --save'
 
-        echo '🧪 Running unit tests if defined...'
-        // Only run tests if package.json contains a "test" script
-        sh '''
-          set -e
-          if npm run -s test >/dev/null 2>&1; then
-            echo "Found test script. Running tests..."
-            npm test
-          else
-            echo "No test script in package.json. Skipping tests."
-          fi
-        '''
-        // (optional) re-stash
-        stash name: 'src-after-npm', includes: '**/*'
-      }
-    }
-
-    stage('Build Docker image') {
-      agent any // controller (has docker CLI)
-      steps {
-        echo '🐳 Building Docker image (controller talks to DinD)...'
-        unstash 'src-after-npm'
-        sh '''
-          set -eux
-          docker --version
-          docker build -t "$DOCKER_IMAGE" .
-        '''
-      }
-    }
-
-    stage('Push Docker image') {
-      agent any
-      steps {
-        echo '📤 Pushing Docker image to Docker Hub...'
-        withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
-          sh '''
-            set -eux
-            echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-            docker push "$DOCKER_IMAGE"
-          '''
+        stage('Install Deps & Unit Tests') {
+            agent {
+                docker {
+                    image 'node:16'
+                    args '-v /var/jenkins_home/workspace:/var/jenkins_home/workspace --entrypoint=""'
+                }
+            }
+            steps {
+                sh 'npm install --save'
+                sh 'npm test || echo "⚠️ No tests found, skipping..."'
+            }
         }
-      }
-    }
-  }
 
-  post {
-    always {
-      echo '📌 Archiving npm debug logs if present...'
-      // Provide a node/workspace context even though pipeline uses agent none
-      node {
-        archiveArtifacts artifacts: '**/npm-debug.log', allowEmptyArchive: true
-      }
+        stage('Build Docker Image') {
+            steps {
+                sh "docker build -t $DOCKER_IMAGE ."
+            }
+        }
+
+        stage('Push Docker Image') {
+            steps {
+                withCredentials([string(credentialsId: 'docker-hub-pass', variable: 'DOCKER_PASS')]) {
+                    sh "echo $DOCKER_PASS | docker login -u 22063713 --password-stdin"
+                    sh "docker push $DOCKER_IMAGE"
+                }
+            }
+        }
     }
-  }
 }
