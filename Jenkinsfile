@@ -1,44 +1,48 @@
 pipeline {
-    agent any
-
-    environment {
-        DOCKER_IMAGE = "22063713/aws-sample-app:latest"
+    agent {
+        docker {
+            image 'node:16'
+            args '-u root:root -v /var/run/docker.sock:/var/run/docker.sock'
+        }
     }
-
+    environment {
+        DOCKER_IMAGE = "<your-dockerhub-username>/aws-sample-app:latest"
+    }
     stages {
         stage('Checkout') {
             steps {
-                git branch: 'main',
-                    url: 'https://github.com/22063713/aws-elastic-beanstalk-express-js-sample.git'
+                echo "🔍 Checking out source code..."
+                checkout scm
             }
         }
-
-        stage('Install Deps & Unit Tests') {
-            agent {
-                docker {
-                    image 'node:16'
-                    args '-v /var/jenkins_home/workspace:/var/jenkins_home/workspace --entrypoint=""'
-                }
-            }
+        stage('Install Deps & Unit tests') {
             steps {
+                echo "📦 Installing dependencies..."
                 sh 'npm install --save'
+                echo "🧪 Running tests..."
                 sh 'npm test || echo "⚠️ No tests found, skipping..."'
             }
         }
-
-        stage('Build Docker Image') {
+        stage('Build Docker image') {
             steps {
-                sh "docker build -t $DOCKER_IMAGE ."
+                echo "🐳 Building Docker image..."
+                sh 'docker build -t $DOCKER_IMAGE .'
             }
         }
-
-        stage('Push Docker Image') {
+        stage('Push Docker image') {
             steps {
-                withCredentials([string(credentialsId: 'docker-hub-pass', variable: 'DOCKER_PASS')]) {
-                    sh "echo $DOCKER_PASS | docker login -u 22063713 --password-stdin"
-                    sh "docker push $DOCKER_IMAGE"
+                echo "🚀 Pushing Docker image to registry..."
+                withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                    sh 'echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin'
+                    sh 'docker push $DOCKER_IMAGE'
                 }
             }
+        }
+    }
+    post {
+        always {
+            echo "🗑 Archiving logs if present..."
+            archiveArtifacts artifacts: '**/npm-debug.log', allowEmptyArchive: true
         }
     }
 }
