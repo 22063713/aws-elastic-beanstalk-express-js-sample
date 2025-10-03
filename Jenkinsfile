@@ -1,48 +1,50 @@
 // Jenkinsfile — CI/CD for AWS Sample Node.js app
-// Humanized comments for marking :)
+// Notes:
+// - Node tasks (install/test) run in a Node 16 container scheduled by the Docker plugin.
+//   We *explicitly* mount /var/jenkins_home so the DinD host can bind the workspace path.
+// - Docker build/push run on the controller (which has docker CLI + DOCKER_HOST to DinD).
 
 pipeline {
   agent none
-  options { skipDefaultCheckout(true) } // we'll checkout once in the first stage
+  options { skipDefaultCheckout(true) }
 
   environment {
-    // Tag image as latest; you can also add BUILD_NUMBER or git SHA if you want
+    // Change to your Docker Hub repo
     DOCKER_IMAGE = "YOUR_DOCKERHUB_USERNAME/aws-sample-app:latest"
   }
 
   stages {
     stage('Checkout') {
-      agent any // run on the controller
+      agent any
       steps {
         echo '📥 Checking out source code...'
         checkout scm
-        // Save the workspace to reuse it in other agents
         stash name: 'src', includes: '**/*'
       }
     }
 
     stage('Install deps & Unit tests (Node 16)') {
-      // Use Node 16 Docker image only for Node work
       agent {
         docker {
           image 'node:16'
-          args '-u root:root' // avoid permission issues writing node_modules
+          // IMPORTANT: map Jenkins home so the workspace path exists on the DinD host
+          args '-u root:root -v /var/jenkins_home:/var/jenkins_home'
+          // (the Docker plugin will still mount the workspace automatically)
         }
       }
       steps {
         echo '📦 Restoring source and installing dependencies...'
         unstash 'src'
-        // Per assignment: npm install --save
         sh 'npm install --save'
         echo '🧪 Running unit tests (will skip if none are configured)...'
         sh 'npm test || echo "No tests defined, skipping..."'
-        // Re-stash in case node_modules produced artifacts you want later
+        // re-stash in case anything created is needed later (optional)
         stash name: 'src-after-npm', includes: '**/*'
       }
     }
 
     stage('Build Docker image') {
-      agent any // run on controller (has docker CLI + DOCKER_HOST=dind)
+      agent any   // run on controller (has docker CLI mapped + DOCKER_HOST to dind)
       steps {
         echo '🐳 Building Docker image on Jenkins controller (DinD backend)...'
         unstash 'src-after-npm'
@@ -57,7 +59,7 @@ pipeline {
     stage('Push Docker image') {
       agent any
       steps {
-        echo '📤 Pushing Docker image to DockerHub...'
+        echo '📤 Pushing Docker image to Docker Hub...'
         withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
           sh '''
             set -eux
