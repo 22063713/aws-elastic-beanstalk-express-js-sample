@@ -1,16 +1,14 @@
 // Jenkinsfile — CI/CD for AWS Sample Node.js app
-// Notes:
-// - Node tasks (install/test) run in a Node 16 container scheduled by the Docker plugin.
-//   We *explicitly* mount /var/jenkins_home so the DinD host can bind the workspace path.
-// - Docker build/push run on the controller (which has docker CLI + DOCKER_HOST to DinD).
+// - Node tasks run inside node:16
+// - Docker build/push run on controller (uses DinD via DOCKER_HOST)
+// - Tests are optional: stage won’t fail if package.json has no "test" script
 
 pipeline {
   agent none
   options { skipDefaultCheckout(true) }
 
   environment {
-    // Change to your Docker Hub repo
-    DOCKER_IMAGE = "YOUR_DOCKERHUB_USERNAME/aws-sample-app:latest"
+    DOCKER_IMAGE = "YOUR_DOCKERHUB_USERNAME/aws-sample-app:latest" // <-- change me
   }
 
   stages {
@@ -27,26 +25,35 @@ pipeline {
       agent {
         docker {
           image 'node:16'
-          // IMPORTANT: map Jenkins home so the workspace path exists on the DinD host
+          // Ensure the DinD host can bind-mount the workspace path
           args '-u root:root -v /var/jenkins_home:/var/jenkins_home'
-          // (the Docker plugin will still mount the workspace automatically)
         }
       }
       steps {
         echo '📦 Restoring source and installing dependencies...'
         unstash 'src'
         sh 'npm install --save'
-        echo '🧪 Running unit tests (will skip if none are configured)...'
-        sh 'npm test || echo "No tests defined, skipping..."'
-        // re-stash in case anything created is needed later (optional)
+
+        echo '🧪 Running unit tests if defined...'
+        // Only run tests if package.json contains a "test" script
+        sh '''
+          set -e
+          if npm run -s test >/dev/null 2>&1; then
+            echo "Found test script. Running tests..."
+            npm test
+          else
+            echo "No test script in package.json. Skipping tests."
+          fi
+        '''
+        // (optional) re-stash
         stash name: 'src-after-npm', includes: '**/*'
       }
     }
 
     stage('Build Docker image') {
-      agent any   // run on controller (has docker CLI mapped + DOCKER_HOST to dind)
+      agent any // controller (has docker CLI)
       steps {
-        echo '🐳 Building Docker image on Jenkins controller (DinD backend)...'
+        echo '🐳 Building Docker image (controller talks to DinD)...'
         unstash 'src-after-npm'
         sh '''
           set -eux
@@ -74,7 +81,10 @@ pipeline {
   post {
     always {
       echo '📌 Archiving npm debug logs if present...'
-      archiveArtifacts artifacts: '**/npm-debug.log', allowEmptyArchive: true
+      // Provide a node/workspace context even though pipeline uses agent none
+      node {
+        archiveArtifacts artifacts: '**/npm-debug.log', allowEmptyArchive: true
+      }
     }
   }
 }
