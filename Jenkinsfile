@@ -1,64 +1,108 @@
-pipeline {
-  agent any   // run on the Jenkins controller container (it has docker CLI + DOCKER_HOST)
+// ==========================
+// CI/CD Pipeline for Project
+// Runs inside a Node 16 Docker container and uses a DinD service
+// to build & push the application image to Docker Hub.
+// ==========================
 
+pipeline {
+  // Run all stages inside a container based on Node 16
+  agent {
+    docker {
+      image 'node:16'
+      // Give the container access to the DinD daemon and apt
+      // - DOCKER_HOST points to your dind service from docker-compose
+      // - we run as root to install docker-cli inside the container
+      args '-u 0:0 -e DOCKER_HOST=tcp://dind:2375'
+    }
+  }
+
+  // Simple variables you can change
   environment {
-    REPO_URL     = 'https://github.com/<your-username>/aws-elastic-beanstalk-express-js-sample.git'
-    BRANCH       = 'main'
-    DOCKER_IMAGE = '<your-dockerhub-username>/aws-sample-app:${BUILD_NUMBER}'
+    // Your Docker Hub org/user and repository name for the image
+    DOCKERHUB_USER   = 'YOUR_DOCKERHUB_USERNAME'     // <-- change this
+    IMAGE_NAME       = 'aws-sample-app'               // <-- change if you want
+    // Credentials ID you created in Jenkins (must exist!)
+    DOCKERHUB_CREDS_ID = 'dockerhub-creds'
+  }
+
+  options {
+    // Show timestamps in logs; keep logs readable for the assignment
+    timestamps()
   }
 
   stages {
+
     stage('Checkout') {
       steps {
-        echo '🔍 Checking out source...'
-        deleteDir()
-        git url: "${REPO_URL}", branch: "${BRANCH}"
+        echo '📥 Checking out source code...'
+        checkout scm
       }
     }
 
-    stage('Install deps (Node 16)') {
+    stage('Prepare node & docker-cli') {
       steps {
-        echo '📦 Installing dependencies inside a Node 16 container...'
         sh '''
-          docker run --rm -v "$PWD":/app -w /app node:16 bash -lc '
-            set -e
-            if command -v npm >/dev/null 2>&1; then
-              npm ci || npm install --save
-            else
-              echo "npm not found in node:16?"; exit 1
-            fi
-          '
+          set -euxo pipefail
+          # Update apt catalog inside the Node container and install Docker CLI.
+          # (We only need client tools since we talk to daemon at DOCKER_HOST.)
+          apt-get update
+          apt-get install -y --no-install-recommends docker.io ca-certificates
+          docker --version
+          node -v
+          npm -v
         '''
       }
     }
 
-    stage('Run Unit Tests') {
+    stage('Install deps & Unit tests (Node 16)') {
       steps {
-        echo '🧪 Running unit tests (will skip if none exist)...'
+        echo '📦 Restoring source and installing dependencies...'
         sh '''
-          docker run --rm -v "$PWD":/app -w /app node:16 bash -lc '
-            npm test || echo "No tests defined, continuing..."
-          '
+          set -euxo pipefail
+          npm install --save
+
+          # If a test script exists in package.json, run tests; otherwise skip.
+          if grep -q '"test":' package.json; then
+            echo "🧪 Running unit tests..."
+            npm test
+          else
+            echo "ℹ️  No test script found in package.json. Skipping tests."
+          fi
         '''
       }
     }
 
     stage('Build Docker image') {
       steps {
-        echo "🐳 Building image $DOCKER_IMAGE ..."
-        sh 'docker build -t "$DOCKER_IMAGE" .'
+        sh '''
+          set -euxo pipefail
+          IMAGE_TAG="${DOCKERHUB_USER}/${IMAGE_NAME}:${BUILD_NUMBER}"
+          echo "🔧 Building ${IMAGE_TAG}"
+          docker build -t "${IMAGE_TAG}" .
+          docker images | head -n 10
+        '''
       }
     }
 
     stage('Push Docker image') {
       steps {
-        echo '🚀 Pushing image to Docker Hub...'
-        withCredentials([usernamePassword(credentialsId: 'dockerhub-creds',
-                                          usernameVariable: 'DOCKER_USER',
-                                          passwordVariable: 'DOCKER_PASS')]) {
+        withCredentials([usernamePassword(credentialsId: env.DOCKERHUB_CREDS_ID,
+                                         usernameVariable: 'DH_USER',
+                                         passwordVariable: 'DH_PASS')]) {
           sh '''
-            echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-            docker push "$DOCKER_IMAGE"
+            set -euxo pipefail
+            echo "🔐 Logging into Docker Hub…"
+            echo "$DH_PASS" | docker login -u "$DH_USER" --password-stdin
+
+            IMAGE_TAG="${DOCKERHUB_USER}/${IMAGE_NAME}:${BUILD_NUMBER}"
+            LATEST="${DOCKERHUB_USER}/${IMAGE_NAME}:latest"
+
+            echo "🚚 Pushing ${IMAGE_TAG} and ${LATEST}"
+            docker tag "${IMAGE_TAG}" "${LATEST}"
+            docker push "${IMAGE_TAG}"
+            docker push "${LATEST}"
+
+            docker logout || true
           '''
         }
       }
@@ -67,8 +111,8 @@ pipeline {
 
   post {
     always {
-      echo '🗂 Archiving logs (if any)...'
-      archiveArtifacts artifacts: '**/npm-debug.log,**/*.log', allowEmptyArchive: true
+      echo '📎 Archiving npm log if present...'
+      archiveArtifacts artifacts: 'npm-debug.log', allowEmptyArchive: true
     }
   }
 }
