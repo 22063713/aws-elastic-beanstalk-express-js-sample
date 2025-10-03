@@ -1,73 +1,27 @@
-pipeline {
-    agent {
-        docker {
-            image 'node:16'
-            args '-u root:root -v /var/run/docker.sock:/var/run/docker.sock'
-        }
-    }
+services:
+  jenkins:
+    image: jenkins/jenkins:lts-jdk11
+    container_name: jenkins
+    privileged: true
+    user: root
+    ports:
+      - "8080:8080"
+      - "50000:50000"
+    environment:
+      DOCKER_HOST: tcp://dind:2375
+    volumes:
+      - jenkins_home:/var/jenkins_home
+    depends_on:
+      - dind
 
-    environment {
-        DOCKER_IMAGE = "22063713/aws-sample-app:latest"
-    }
+  dind:
+    image: docker:24-dind
+    container_name: dind
+    privileged: true
+    ports:
+      - "2375:2375"
+    environment:
+      DOCKER_TLS_CERTDIR: ""
 
-    stages {
-        stage('Checkout') {
-            steps {
-                echo "📂 Checking out source code..."
-                checkout scm
-            }
-        }
-
-        stage('Install Dependencies') {
-            steps {
-                echo "📦 Installing dependencies..."
-                sh 'npm install --save'
-            }
-        }
-
-        stage('Run Unit Tests') {
-            steps {
-                echo "🧪 Running unit tests..."
-                sh 'npm test || echo "⚠️ No tests specified, skipping..."'
-            }
-        }
-
-        stage('Build Docker Image') {
-            steps {
-                echo "🐳 Building Docker image..."
-                sh '''
-                  docker --version
-                  docker build -t $DOCKER_IMAGE .
-                '''
-            }
-        }
-
-        stage('Push Docker Image') {
-            steps {
-                withCredentials([usernamePassword(
-                    credentialsId: 'dockerhub-creds',
-                    usernameVariable: 'DOCKER_USER',
-                    passwordVariable: 'DOCKER_PASS'
-                )]) {
-                    sh '''
-                      echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-                      docker push $DOCKER_IMAGE
-                    '''
-                }
-            }
-        }
-    }
-
-    post {
-        always {
-            echo "🧾 Archiving npm logs if present..."
-            archiveArtifacts artifacts: '**/npm-debug.log', allowEmptyArchive: true
-        }
-        success {
-            echo "✅ Pipeline completed successfully!"
-        }
-        failure {
-            echo "❌ Pipeline failed. Check logs!"
-        }
-    }
-}
+volumes:
+  jenkins_home:
