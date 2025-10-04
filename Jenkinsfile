@@ -9,7 +9,6 @@ pipeline {
     options {
         timestamps()
         buildDiscarder(logRotator(numToKeepStr: '5'))
-        ansiColor('xterm')
     }
 
     environment {
@@ -70,6 +69,10 @@ pipeline {
     }
 
     post {
+        always {
+            echo "🧹 Cleaning up workspace..."
+            sh 'docker system prune -af || true'
+        }
         success {
             echo "✅ Pipeline completed successfully!"
         }
