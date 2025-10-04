@@ -1,10 +1,5 @@
 pipeline {
-    agent {
-        docker {
-            image 'node:16'
-            args '-u root:root -v /var/run/docker.sock:/var/run/docker.sock'
-        }
-    }
+    agent any
 
     options {
         timestamps()
@@ -16,10 +11,18 @@ pipeline {
     }
 
     stages {
-        stage('Install Dependencies') {
+        stage('Install Node and Dependencies') {
             steps {
-                echo "📦 Installing dependencies..."
-                sh 'npm install --save'
+                echo "📦 Installing Node.js and dependencies..."
+                sh '''
+                    apt-get update -y
+                    apt-get install -y curl
+                    curl -fsSL https://deb.nodesource.com/setup_16.x | bash -
+                    apt-get install -y nodejs
+                    node -v
+                    npm -v
+                    npm install --save
+                '''
             }
         }
 
@@ -57,7 +60,7 @@ pipeline {
 
         stage('Push Docker Image') {
             steps {
-                echo "📤 Pushing Docker image to DockerHub..."
+                echo "📤 Pushing Docker image..."
                 withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                     sh '''
                         echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
@@ -70,7 +73,7 @@ pipeline {
 
     post {
         always {
-            echo "🧹 Cleaning up workspace..."
+            echo "🧹 Cleaning up..."
             sh 'docker system prune -af || true'
         }
         success {
