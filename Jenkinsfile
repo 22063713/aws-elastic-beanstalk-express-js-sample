@@ -3,7 +3,7 @@ pipeline {
 
     stages {
         stage('Install node dependencies') {
-            agent { docker { image 'node:16' } }
+            agent { docr { ige '16' } }
             steps {
                 echo 'Installing..'
                 sh 'npm install --save'
