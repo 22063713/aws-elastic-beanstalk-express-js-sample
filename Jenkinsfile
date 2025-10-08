@@ -9,7 +9,7 @@ pipeline {
                 sh 'npm install --save'
             }
         }
-
+//Test stage
         stage('Test') {
             agent { docker { image 'node:16' } }
             steps {
@@ -17,7 +17,7 @@ pipeline {
                 sh 'npm test || echo "No tests specified"'
             }
         }
-
+//Security implementing
         stage('Snyk Scan') {
             agent { docker { image 'node:16' } }
             steps {
@@ -36,7 +36,7 @@ pipeline {
                 }
             }
         }
-
+//Build Image and Push
         stage('Build Docker Image & push to registry') {
             agent any
             steps {
