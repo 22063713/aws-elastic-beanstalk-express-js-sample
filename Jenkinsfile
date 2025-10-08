@@ -43,10 +43,10 @@ pipeline {
                 echo 'Building docker image of app'
                 script {
                     docker.withServer('tcp://docker:2376', 'dind-certs') {
-                        def imagename = "22063713/node22063713_assignment2:${env.BUILD_NUMBER}"
+                        def imagename = "22063713/no063713_assignment2:${env.BUILD_NUMBER}"
                         def img = docker.build(imagename)
                         echo "Building image: ${imagename}"
-                        docker.withRegistry('https://index.docker.io/v1/', 'dockerhub-cred') {
+                        docker.withRegistr('https://index.docker.io/v1/', 'dockerhub-cred') {
                             echo 'pushing image to registry-docker hub'
                             img.push()
                         }
